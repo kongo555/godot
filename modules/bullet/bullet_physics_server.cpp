@@ -34,10 +34,12 @@
 #include "cone_twist_joint_bullet.h"
 #include "core/class_db.h"
 #include "core/error_macros.h"
+#include "core/message_queue.h"
 #include "core/ustring.h"
 #include "generic_6dof_joint_bullet.h"
 #include "hinge_joint_bullet.h"
 #include "pin_joint_bullet.h"
+#include "scene/main/scene_tree.h"
 #include "shape_bullet.h"
 #include "slider_joint_bullet.h"
 
@@ -1541,11 +1543,14 @@ void BulletPhysicsServer::step(float p_deltaTime) {
 		return;
 	}
 
+    SceneTree::get_singleton()->flush_transform_notifications();
 	BulletPhysicsDirectBodyState::singleton_setDeltaTime(p_deltaTime);
 
 	for (int i = 0; i < active_spaces_count; ++i) {
 		active_spaces[i]->step(p_deltaTime);
 	}
+
+    MessageQueue::get_singleton()->flush();
 }
 
 void BulletPhysicsServer::flush_queries() {

@@ -592,6 +592,8 @@ void onBulletTickCallback(btDynamicsWorld *p_dynamicsWorld, btScalar timeStep) {
 	for (int i = colObjArray.size() - 1; 0 <= i; --i) {
 		static_cast<CollisionObjectBullet *>(colObjArray[i]->getUserPointer())->on_collision_checker_end();
 	}
+
+    onBulletPreTickCallback(p_dynamicsWorld, timeStep);
 }
 
 BulletPhysicsDirectSpaceState *SpaceBullet::get_direct_state() {
@@ -644,7 +646,7 @@ void SpaceBullet::create_empty_world(bool p_create_soft_world) {
 
 	dynamicsWorld->setWorldUserInfo(this);
 
-	dynamicsWorld->setInternalTickCallback(onBulletPreTickCallback, this, true);
+	// dynamicsWorld->setInternalTickCallback(onBulletPreTickCallback, this, true);
 	dynamicsWorld->setInternalTickCallback(onBulletTickCallback, this, false);
 	dynamicsWorld->getBroadphase()->getOverlappingPairCache()->setInternalGhostPairCallback(ghostPairCallback); // Setup ghost check
 	dynamicsWorld->getPairCache()->setOverlapFilterCallback(godotFilterCallback);

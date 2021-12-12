@@ -1539,13 +1539,11 @@ void BulletPhysicsServer::init() {
 }
 
 void BulletPhysicsServer::step(float p_deltaTime) {
-    MessageQueue::get_singleton()->flush();
-    SceneTree::get_singleton()->flush_transform_notifications();
-
 	if (!active) {
 		return;
 	}
 
+    SceneTree::get_singleton()->flush_transform_notifications();
 	BulletPhysicsDirectBodyState::singleton_setDeltaTime(p_deltaTime);
 
 	for (int i = 0; i < active_spaces_count; ++i) {

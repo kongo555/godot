@@ -2156,7 +2156,7 @@ bool Main::iteration() {
 
 		uint64_t physics_begin = OS::get_singleton()->get_ticks_usec();
 
-		// PhysicsServer::get_singleton()->flush_queries(); // in bullet function is empty. Call Not needed
+		PhysicsServer::get_singleton()->flush_queries();
 
 		Physics2DServer::get_singleton()->sync();
 		Physics2DServer::get_singleton()->flush_queries();
@@ -2168,7 +2168,7 @@ bool Main::iteration() {
 
 		message_queue->flush();
 
-		// PhysicsServer::get_singleton()->step(frame_slice * time_scale); // call manually from script
+		PhysicsServer::get_singleton()->step(frame_slice * time_scale);
 
 		Physics2DServer::get_singleton()->end_sync();
 		Physics2DServer::get_singleton()->step(frame_slice * time_scale);

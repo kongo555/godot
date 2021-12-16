@@ -479,7 +479,6 @@ bool PhysicsServer::_body_test_motion(RID p_body, const Transform &p_from, const
 
 void PhysicsServer::_bind_methods() {
 #ifndef _3D_DISABLED
-	ClassDB::bind_method(D_METHOD("step", "delta"), &PhysicsServer::step);
 
 	ClassDB::bind_method(D_METHOD("shape_create", "type"), &PhysicsServer::shape_create);
 	ClassDB::bind_method(D_METHOD("shape_set_data", "shape", "data"), &PhysicsServer::shape_set_data);

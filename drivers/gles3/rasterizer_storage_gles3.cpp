@@ -4273,6 +4273,7 @@ void RasterizerStorageGLES3::mesh_render_blend_shapes(Surface *s, const float *p
 
 	shaders.blend_shapes.set_conditional(BlendShapeShaderGLES3::ENABLE_BLEND, false); //first pass does not blend
 	shaders.blend_shapes.set_conditional(BlendShapeShaderGLES3::USE_2D_VERTEX, s->format & VS::ARRAY_FLAG_USE_2D_VERTICES); //use 2D vertices if needed
+	shaders.blend_shapes.set_conditional(BlendShapeShaderGLES3::ENABLE_OCTAHEDRAL_COMPRESSION, s->format & VS::ARRAY_FLAG_USE_OCTAHEDRAL_COMPRESSION); //use octahedral normal compression
 
 	shaders.blend_shapes.bind();
 
@@ -6115,9 +6116,6 @@ void RasterizerStorageGLES3::particles_set_emitting(RID p_particles, bool p_emit
 	Particles *particles = particles_owner.getornull(p_particles);
 	ERR_FAIL_COND(!particles);
 
-	if (p_emitting && !particles->emitting) {
-		particles_request_process(p_particles);
-	}
 	particles->emitting = p_emitting;
 }
 
@@ -6444,6 +6442,7 @@ void RasterizerStorageGLES3::_particles_process(Particles *p_particles, float p_
 
 	glBindVertexArray(p_particles->particle_vaos[0]);
 
+	glBindBuffer(GL_ARRAY_BUFFER, 0); // ensure this is unbound per WebGL2 spec
 	glBindBufferBase(GL_TRANSFORM_FEEDBACK_BUFFER, 0, p_particles->particle_buffers[1]);
 
 	//		GLint size = 0;
@@ -6826,6 +6825,7 @@ void RasterizerStorageGLES3::_render_target_clear(RenderTarget *rt) {
 
 		// clean up our texture
 		Texture *t = texture_owner.get(rt->external.texture);
+		t->tex_id = 0;
 		t->alloc_height = 0;
 		t->alloc_width = 0;
 		t->width = 0;
@@ -7335,6 +7335,7 @@ void RasterizerStorageGLES3::render_target_set_external_texture(RID p_render_tar
 
 			// clean up our texture
 			Texture *t = texture_owner.get(rt->external.texture);
+			t->tex_id = 0;
 			t->alloc_height = 0;
 			t->alloc_width = 0;
 			t->width = 0;

@@ -389,7 +389,8 @@ static NSCursor *cursorFromSelector(SEL selector, SEL fallback = nil) {
 		CGLEnable((CGLContextObj)[OS_OSX::singleton->context CGLContextObj], kCGLCESurfaceBackingSize);
 	}
 
-	if (OS_OSX::singleton->main_loop) {
+	// Do not redraw when rendering is done from the separate thread, it will conflict with the OpenGL context updates triggered by window view resize.
+	if (OS_OSX::singleton->main_loop && (OS_OSX::singleton->get_render_thread_mode() != OS::RENDER_SEPARATE_THREAD)) {
 		Main::force_redraw();
 		//Event retrieval blocks until resize is over. Call Main::iteration() directly.
 		if (!Main::is_iterating()) { //avoid cyclic loop
@@ -1682,11 +1683,6 @@ Error OS_OSX::initialize(const VideoMode &p_desired, int p_video_driver, int p_a
 	CGLSetParameter((CGLContextObj)[context CGLContextObj], kCGLCPSurfaceBackingSize, &dim[0]);
 	CGLEnable((CGLContextObj)[context CGLContextObj], kCGLCESurfaceBackingSize);
 
-	if (get_render_thread_mode() != RENDER_THREAD_UNSAFE) {
-		CGLError err = CGLEnable((CGLContextObj)[context CGLContextObj], kCGLCEMPEngine); // Enable multithreading.
-		ERR_FAIL_COND_V(err != kCGLNoError, ERR_UNAVAILABLE);
-	}
-
 	set_use_vsync(p_desired.use_vsync);
 
 	if (!is_no_window_mode_enabled()) {
@@ -2280,7 +2276,7 @@ String OS_OSX::get_cache_path() const {
 		if (get_environment("XDG_CACHE_HOME").is_abs_path()) {
 			return get_environment("XDG_CACHE_HOME");
 		} else {
-			WARN_PRINT_ONCE("`XDG_CACHE_HOME` is a relative path. Ignoring its value and falling back to `$HOME/Libary/Caches` or `get_config_path()` per the XDG Base Directory specification.");
+			WARN_PRINT_ONCE("`XDG_CACHE_HOME` is a relative path. Ignoring its value and falling back to `$HOME/Library/Caches` or `get_config_path()` per the XDG Base Directory specification.");
 		}
 	}
 	if (has_environment("HOME")) {
@@ -3330,7 +3326,7 @@ void OS_OSX::run() {
 				quit = true;
 			}
 		} @catch (NSException *exception) {
-			ERR_PRINT("NSException: " + String([exception reason].UTF8String));
+			ERR_PRINT("NSException: " + String::utf8([exception reason].UTF8String));
 		}
 	};
 
@@ -3406,7 +3402,7 @@ Error OS_OSX::move_to_trash(const String &p_path) {
 	NSError *err;
 
 	if (![fm trashItemAtURL:url resultingItemURL:nil error:&err]) {
-		ERR_PRINT("trashItemAtURL error: " + String(err.localizedDescription.UTF8String));
+		ERR_PRINT("trashItemAtURL error: " + String::utf8(err.localizedDescription.UTF8String));
 		return FAILED;
 	}
 

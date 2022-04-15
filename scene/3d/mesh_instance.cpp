@@ -519,6 +519,243 @@ void MeshInstance::_update_skinning() {
 	software_skinning_flags |= SoftwareSkinning::FLAG_BONES_READY;
 }
 
+PoolVector<Face3> MeshInstance::get_deformed_faces() const {
+    // CODE from MeshInstance::_initialize_skinning for software_skinning
+    if (mesh.is_null()) {
+		return PoolVector<Face3>();
+	}
+
+	VisualServer *visual_server = VisualServer::get_singleton();
+
+    SoftwareSkinning *software_skinning = memnew(SoftwareSkinning);
+
+    if (mesh->get_blend_shape_count() > 0) {
+        ERR_PRINT("Blend shapes are not supported for software skinning.");
+    }
+
+    Ref<ArrayMesh> software_mesh;
+    software_mesh.instance();
+    RID mesh_rid = software_mesh->get_rid();
+
+    // Initialize mesh for dynamic update.
+    int surface_count = mesh->get_surface_count();
+    software_skinning->surface_data.resize(surface_count);
+    for (int surface_index = 0; surface_index < surface_count; ++surface_index) {
+        ERR_CONTINUE(Mesh::PRIMITIVE_TRIANGLES != mesh->surface_get_primitive_type(surface_index));
+
+        SoftwareSkinning::SurfaceData &surface_data = software_skinning->surface_data[surface_index];
+        surface_data.transform_tangents = false;
+        surface_data.ensure_correct_normals = false;
+
+        uint32_t format = mesh->surface_get_format(surface_index);
+        ERR_CONTINUE(0 == (format & Mesh::ARRAY_FORMAT_VERTEX));
+        ERR_CONTINUE(0 == (format & Mesh::ARRAY_FORMAT_BONES));
+        ERR_CONTINUE(0 == (format & Mesh::ARRAY_FORMAT_WEIGHTS));
+
+        format |= Mesh::ARRAY_FLAG_USE_DYNAMIC_UPDATE;
+        format &= ~Mesh::ARRAY_COMPRESS_VERTEX;
+        format &= ~Mesh::ARRAY_COMPRESS_WEIGHTS;
+        format &= ~Mesh::ARRAY_FLAG_USE_16_BIT_BONES;
+
+        Array write_arrays = mesh->surface_get_arrays(surface_index);
+        Array read_arrays;
+        read_arrays.resize(Mesh::ARRAY_MAX);
+
+        read_arrays[Mesh::ARRAY_VERTEX] = write_arrays[Mesh::ARRAY_VERTEX];
+        read_arrays[Mesh::ARRAY_BONES] = write_arrays[Mesh::ARRAY_BONES];
+        read_arrays[Mesh::ARRAY_WEIGHTS] = write_arrays[Mesh::ARRAY_WEIGHTS];
+
+        write_arrays[Mesh::ARRAY_BONES] = Variant();
+        write_arrays[Mesh::ARRAY_WEIGHTS] = Variant();
+
+        if (software_skinning_flags & SoftwareSkinning::FLAG_TRANSFORM_NORMALS) {
+            ERR_CONTINUE(0 == (format & Mesh::ARRAY_FORMAT_NORMAL));
+            format &= ~Mesh::ARRAY_COMPRESS_NORMAL;
+
+            read_arrays[Mesh::ARRAY_NORMAL] = write_arrays[Mesh::ARRAY_NORMAL];
+
+            Ref<Material> mat = get_active_material(surface_index);
+            if (mat.is_valid()) {
+                Ref<SpatialMaterial> spatial_mat = mat;
+                if (spatial_mat.is_valid()) {
+                    // Spatial material, check from material settings.
+                    surface_data.transform_tangents = spatial_mat->get_feature(SpatialMaterial::FEATURE_NORMAL_MAPPING);
+                    surface_data.ensure_correct_normals = spatial_mat->get_flag(SpatialMaterial::FLAG_ENSURE_CORRECT_NORMALS);
+                } else {
+                    // Custom shader, must check for compiled flags.
+                    surface_data.transform_tangents = VSG::storage->material_uses_tangents(mat->get_rid());
+                    surface_data.ensure_correct_normals = VSG::storage->material_uses_ensure_correct_normals(mat->get_rid());
+                }
+            }
+
+            if (surface_data.transform_tangents) {
+                ERR_CONTINUE(0 == (format & Mesh::ARRAY_FORMAT_TANGENT));
+                format &= ~Mesh::ARRAY_COMPRESS_TANGENT;
+
+                read_arrays[Mesh::ARRAY_TANGENT] = write_arrays[Mesh::ARRAY_TANGENT];
+            }
+        }
+
+        // 1. Temporarily add surface with bone data to create the read buffer.
+        software_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, read_arrays, Array(), format);
+
+        PoolByteArray buffer_read = visual_server->mesh_surface_get_array(mesh_rid, surface_index);
+        surface_data.source_buffer.append_array(buffer_read);
+        surface_data.source_format = software_mesh->surface_get_format(surface_index);
+
+        software_mesh->surface_remove(surface_index);
+
+        // 2. Create the surface again without the bone data for the write buffer.
+        software_mesh->add_surface_from_arrays(Mesh::PRIMITIVE_TRIANGLES, write_arrays, Array(), format);
+
+        Ref<Material> material = mesh->surface_get_material(surface_index);
+        software_mesh->surface_set_material(surface_index, material);
+
+        surface_data.buffer = visual_server->mesh_surface_get_array(mesh_rid, surface_index);
+        surface_data.buffer_write = surface_data.buffer.write();
+    }
+
+    software_skinning->mesh_instance = software_mesh;
+    // END
+
+    // CODE from MeshInstance::_update_skinning
+	Ref<Mesh> software_skinning_mesh = software_skinning->mesh_instance;
+	// RID mesh_rid = software_skinning_mesh->get_rid();
+	RID source_mesh_rid = mesh->get_rid();
+	RID skeleton = skin_ref->get_skeleton();
+	ERR_FAIL_COND_V(!skeleton.is_valid(), PoolVector<Face3>());
+
+	Vector3 aabb_min = Vector3(FLT_MAX, FLT_MAX, FLT_MAX);
+	Vector3 aabb_max = Vector3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
+
+	// Prepare bone transforms.
+	const int num_bones = visual_server->skeleton_get_bone_count(skeleton);
+	ERR_FAIL_COND_V(num_bones <= 0, PoolVector<Face3>());
+	Transform *bone_transforms = (Transform *)alloca(sizeof(Transform) * num_bones);
+	for (int bone_index = 0; bone_index < num_bones; ++bone_index) {
+		bone_transforms[bone_index] = visual_server->skeleton_bone_get_transform(skeleton, bone_index);
+	}
+
+	// Apply skinning.
+	// int surface_count = software_skinning_mesh->get_surface_count();
+	for (int surface_index = 0; surface_index < surface_count; ++surface_index) {
+		ERR_CONTINUE((uint32_t)surface_index >= software_skinning->surface_data.size());
+		const SoftwareSkinning::SurfaceData &surface_data = software_skinning->surface_data[surface_index];
+		const bool transform_tangents = surface_data.transform_tangents;
+		const bool ensure_correct_normals = surface_data.ensure_correct_normals;
+
+		const uint32_t format_write = software_skinning_mesh->surface_get_format(surface_index);
+
+		const int vertex_count_write = software_skinning_mesh->surface_get_array_len(surface_index);
+		const int index_count_write = software_skinning_mesh->surface_get_array_index_len(surface_index);
+
+		uint32_t array_offsets_write[Mesh::ARRAY_MAX];
+		uint32_t array_strides_write[Mesh::ARRAY_MAX];
+		visual_server->mesh_surface_make_offsets_from_format(format_write, vertex_count_write, index_count_write, array_offsets_write, array_strides_write);
+		// ERR_FAIL_COND(array_strides_write[Mesh::ARRAY_VERTEX] != array_strides_write[Mesh::ARRAY_NORMAL]);
+		const uint32_t stride_write = array_strides_write[Mesh::ARRAY_VERTEX];
+		const uint32_t offset_vertices_write = array_offsets_write[Mesh::ARRAY_VERTEX];
+		const uint32_t offset_normals_write = array_offsets_write[Mesh::ARRAY_NORMAL];
+		const uint32_t offset_tangents_write = array_offsets_write[Mesh::ARRAY_TANGENT];
+
+		PoolByteArray buffer_source = surface_data.source_buffer;
+		PoolByteArray::Read buffer_read = buffer_source.read();
+
+		const uint32_t format_read = surface_data.source_format;
+
+		ERR_CONTINUE(0 == (format_read & Mesh::ARRAY_FORMAT_BONES));
+		ERR_CONTINUE(0 == (format_read & Mesh::ARRAY_FORMAT_WEIGHTS));
+
+		const int vertex_count = mesh->surface_get_array_len(surface_index);
+		const int index_count = mesh->surface_get_array_index_len(surface_index);
+
+		ERR_CONTINUE(vertex_count != vertex_count_write);
+
+		uint32_t array_offsets[Mesh::ARRAY_MAX];
+		uint32_t array_strides[Mesh::ARRAY_MAX];
+		visual_server->mesh_surface_make_offsets_from_format(format_read, vertex_count, index_count, array_offsets, array_strides);
+		// ERR_FAIL_COND(array_strides[Mesh::ARRAY_VERTEX] != array_strides[Mesh::ARRAY_NORMAL]);
+		const uint32_t stride = array_strides[Mesh::ARRAY_VERTEX];
+		const uint32_t offset_vertices = array_offsets[Mesh::ARRAY_VERTEX];
+		const uint32_t offset_normals = array_offsets[Mesh::ARRAY_NORMAL];
+		const uint32_t offset_tangents = array_offsets[Mesh::ARRAY_TANGENT];
+		const uint32_t offset_bones = array_offsets[Mesh::ARRAY_BONES];
+		const uint32_t offset_weights = array_offsets[Mesh::ARRAY_WEIGHTS];
+
+		PoolByteArray buffer = surface_data.buffer;
+		PoolByteArray::Write buffer_write = surface_data.buffer_write;
+
+		for (int vertex_index = 0; vertex_index < vertex_count; ++vertex_index) {
+			const uint32_t vertex_offset = vertex_index * stride;
+			const uint32_t vertex_offset_write = vertex_index * stride_write;
+
+			float bone_weights[4];
+			const float *weight_ptr = (const float *)(buffer_read.ptr() + offset_weights + vertex_offset);
+			bone_weights[0] = weight_ptr[0];
+			bone_weights[1] = weight_ptr[1];
+			bone_weights[2] = weight_ptr[2];
+			bone_weights[3] = weight_ptr[3];
+
+			const uint8_t *bones_ptr = buffer_read.ptr() + offset_bones + vertex_offset;
+			const int b0 = bones_ptr[0];
+			const int b1 = bones_ptr[1];
+			const int b2 = bones_ptr[2];
+			const int b3 = bones_ptr[3];
+
+			Transform transform;
+			transform.origin =
+					bone_weights[0] * bone_transforms[b0].origin +
+					bone_weights[1] * bone_transforms[b1].origin +
+					bone_weights[2] * bone_transforms[b2].origin +
+					bone_weights[3] * bone_transforms[b3].origin;
+
+			transform.basis =
+					bone_transforms[b0].basis * bone_weights[0] +
+					bone_transforms[b1].basis * bone_weights[1] +
+					bone_transforms[b2].basis * bone_weights[2] +
+					bone_transforms[b3].basis * bone_weights[3];
+
+			const Vector3 &vertex_read = (const Vector3 &)buffer_read[vertex_offset + offset_vertices];
+			Vector3 &vertex = (Vector3 &)buffer_write[vertex_offset_write + offset_vertices_write];
+			vertex = transform.xform(vertex_read);
+
+			if (software_skinning_flags & SoftwareSkinning::FLAG_TRANSFORM_NORMALS) {
+				if (ensure_correct_normals) {
+					transform.basis.invert();
+					transform.basis.transpose();
+				}
+
+				const Vector3 &normal_read = (const Vector3 &)buffer_read[vertex_offset + offset_normals];
+				Vector3 &normal = (Vector3 &)buffer_write[vertex_offset_write + offset_normals_write];
+				normal = transform.basis.xform(normal_read);
+
+				if (transform_tangents) {
+					const Vector3 &tangent_read = (const Vector3 &)buffer_read[vertex_offset + offset_tangents];
+					Vector3 &tangent = (Vector3 &)buffer_write[vertex_offset_write + offset_tangents_write];
+					tangent = transform.basis.xform(tangent_read);
+				}
+			}
+
+			aabb_min.x = MIN(aabb_min.x, vertex.x);
+			aabb_min.y = MIN(aabb_min.y, vertex.y);
+			aabb_min.z = MIN(aabb_min.z, vertex.z);
+			aabb_max.x = MAX(aabb_max.x, vertex.x);
+			aabb_max.y = MAX(aabb_max.y, vertex.y);
+			aabb_max.z = MAX(aabb_max.z, vertex.z);
+		}
+
+		visual_server->mesh_surface_update_region(mesh_rid, surface_index, 0, buffer);
+	}
+
+	visual_server->mesh_set_custom_aabb(mesh_rid, AABB(aabb_min, aabb_max - aabb_min));
+    // END
+
+    PoolVector<Face3> faces = software_skinning_mesh->get_faces();
+    memdelete(software_skinning);
+
+    return faces;
+}
+
 void MeshInstance::set_skin(const Ref<Skin> &p_skin) {
 	skin_internal = p_skin;
 	skin = p_skin;
@@ -1188,6 +1425,7 @@ void MeshInstance::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("create_debug_tangents"), &MeshInstance::create_debug_tangents);
 	ClassDB::set_method_flags("MeshInstance", "create_debug_tangents", METHOD_FLAGS_DEFAULT | METHOD_FLAG_EDITOR);
+    ClassDB::bind_method(D_METHOD("get_deformed_faces"), &MeshInstance::get_deformed_faces);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_mesh", "get_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "skin", PROPERTY_HINT_RESOURCE_TYPE, "Skin"), "set_skin", "get_skin");

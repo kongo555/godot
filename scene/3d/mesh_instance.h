@@ -147,6 +147,7 @@ public:
 
 	virtual AABB get_aabb() const;
 	virtual PoolVector<Face3> get_faces(uint32_t p_usage_flags) const;
+    PoolVector<Face3> get_deformed_faces() const;
 
 	MeshInstance();
 	~MeshInstance();

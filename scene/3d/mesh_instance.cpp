@@ -519,10 +519,10 @@ void MeshInstance::_update_skinning() {
 	software_skinning_flags |= SoftwareSkinning::FLAG_BONES_READY;
 }
 
-PoolVector<Face3> MeshInstance::get_deformed_faces() const {
+Ref<Mesh> MeshInstance::get_deformed_mesh() const {
     // CODE from MeshInstance::_initialize_skinning for software_skinning
     if (mesh.is_null()) {
-		return PoolVector<Face3>();
+		return Ref<Mesh>();
 	}
 
 	VisualServer *visual_server = VisualServer::get_singleton();
@@ -623,14 +623,14 @@ PoolVector<Face3> MeshInstance::get_deformed_faces() const {
 	// RID mesh_rid = software_skinning_mesh->get_rid();
 	RID source_mesh_rid = mesh->get_rid();
 	RID skeleton = skin_ref->get_skeleton();
-	ERR_FAIL_COND_V(!skeleton.is_valid(), PoolVector<Face3>());
+	ERR_FAIL_COND_V(!skeleton.is_valid(), Ref<Mesh>());
 
 	Vector3 aabb_min = Vector3(FLT_MAX, FLT_MAX, FLT_MAX);
 	Vector3 aabb_max = Vector3(-FLT_MAX, -FLT_MAX, -FLT_MAX);
 
 	// Prepare bone transforms.
 	const int num_bones = visual_server->skeleton_get_bone_count(skeleton);
-	ERR_FAIL_COND_V(num_bones <= 0, PoolVector<Face3>());
+	ERR_FAIL_COND_V(num_bones <= 0, Ref<Mesh>());
 	Transform *bone_transforms = (Transform *)alloca(sizeof(Transform) * num_bones);
 	for (int bone_index = 0; bone_index < num_bones; ++bone_index) {
 		bone_transforms[bone_index] = visual_server->skeleton_bone_get_transform(skeleton, bone_index);
@@ -753,7 +753,7 @@ PoolVector<Face3> MeshInstance::get_deformed_faces() const {
     PoolVector<Face3> faces = software_skinning_mesh->get_faces();
     memdelete(software_skinning);
 
-    return faces;
+    return software_skinning_mesh;
 }
 
 void MeshInstance::set_skin(const Ref<Skin> &p_skin) {
@@ -1425,7 +1425,7 @@ void MeshInstance::_bind_methods() {
 
 	ClassDB::bind_method(D_METHOD("create_debug_tangents"), &MeshInstance::create_debug_tangents);
 	ClassDB::set_method_flags("MeshInstance", "create_debug_tangents", METHOD_FLAGS_DEFAULT | METHOD_FLAG_EDITOR);
-    ClassDB::bind_method(D_METHOD("get_deformed_faces"), &MeshInstance::get_deformed_faces);
+    ClassDB::bind_method(D_METHOD("get_deformed_mesh"), &MeshInstance::get_deformed_mesh);
 
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "mesh", PROPERTY_HINT_RESOURCE_TYPE, "Mesh"), "set_mesh", "get_mesh");
 	ADD_PROPERTY(PropertyInfo(Variant::OBJECT, "skin", PROPERTY_HINT_RESOURCE_TYPE, "Skin"), "set_skin", "get_skin");
